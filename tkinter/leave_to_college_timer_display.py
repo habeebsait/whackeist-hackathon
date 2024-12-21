@@ -271,6 +271,10 @@ class CollegeTimerApp:
             # Calculate the sleep duration until 6 AM
             sleep_duration = (target_time - now).total_seconds()
             print(sleep_duration)
+
+            #check_attendance() #enable if u wanna check attendance rn 
+
+            
             # Sleep until 6 AM
             time.sleep(sleep_duration)
 
