@@ -1,108 +1,93 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class AttendanceDisplay extends StatefulWidget {
-  final String usn;
-  final String dob;
-
-  const AttendanceDisplay({Key? key, required this.usn, required this.dob})
-      : super(key: key);
-
   @override
-  State<AttendanceDisplay> createState() => _AttendanceDisplayState();
+  _AttendanceDisplayState createState() => _AttendanceDisplayState();
 }
 
 class _AttendanceDisplayState extends State<AttendanceDisplay> {
-  Map<String, List<Map<String, dynamic>>> timetable = {};
-  Map<String, Map<String, int>> attendance = {}; // Store attendance here
+  late Future<Map<String, dynamic>> _attendanceData;
+  late String usn;
+  late String dob;
 
   @override
-  void initState() {
-    super.initState();
-    _loadTimetable();
-  }
+  void didChangeDependencies() {
+    super.didChangeDependencies();
 
-  Future<void> _loadTimetable() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    String? timetableJson = prefs.getString('timetable');
+    // Access ModalRoute arguments after initState has completed
+    final args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    usn = args?['usn'] ?? 'Unknown';
+    dob = args?['dob'] ?? 'Unknown';
 
-    if (timetableJson != null) {
-      Map<String, dynamic> loadedData = json.decode(timetableJson);
-      loadedData.forEach((day, events) {
-        List<Map<String, dynamic>> dayEvents = [];
-        for (var event in events) {
-          dayEvents.add({
-            'startTime': event[0],
-            'endTime': event[1],
-            'subject': event[2],
-            'isPresent': false, // Initialize attendance as absent by default
-          });
-        }
-        timetable[day] = dayEvents;
-      });
-    } else {
-      // Handle case where timetable is not available
-      // You might want to display an error message or load a default timetable
+    // Validate arguments
+    if (usn == 'Unknown' || dob == 'Unknown') {
+      throw Exception('Missing required arguments: usn or dob');
     }
 
-    setState(() {});
+    _attendanceData = _fetchAttendanceData();
+  }
+
+  Future<Map<String, dynamic>> _fetchAttendanceData() async {
+    // Calculate year_pass, month_pass, and day_pass
+    int year = int.parse(dob.substring(0, 4));
+    int year_pass = (year - 1962);
+    int month = int.parse(dob.substring(5, 7));
+    int month_pass = month + 1;
+    int day = int.parse(dob.substring(8, 10));
+    int day_pass = day + 1;
+
+    final String apiUrl =
+        'http://192.168.0.125:5001/scrape-attendance'; // Backend URL
+
+    try {
+      final response = await http.get(Uri.parse(
+          '$apiUrl?usn=$usn&day=$day_pass&month=$month_pass&year=$year_pass'));
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = json.decode(response.body);
+        return data;
+      } else {
+        throw Exception(
+            'Failed to load attendance data: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Error fetching attendance data: $e');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Attendance'),
-        backgroundColor: Colors.teal,
+        title: Text('Attendance Data'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            Text(
-              'USN: ${widget.usn}',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            Text(
-              'Date of Birth: ${widget.dob}',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 20),
-            Expanded(
-              child: ListView.builder(
-                itemCount: timetable.keys.length,
-                itemBuilder: (context, index) {
-                  String day = timetable.keys.elementAt(index);
-                  List<Map<String, dynamic>> dayEvents = timetable[day]!;
-                  return ExpansionTile(
-                    title: Text(
-                      day,
-                      style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                    children: dayEvents.map((event) {
-                      return ListTile(
-                        title: Text(
-                            '${event['startTime']}:${event['endTime'].toString().padLeft(2, '0')} - ${event['subject']}'),
-                        trailing: Checkbox(
-                          value: event['isPresent'],
-                          onChanged: (value) {
-                            setState(() {
-                              event['isPresent'] = value!;
-                              // Update attendance data here
-                              // (e.g., save to a local database or send to a server)
-                            });
-                          },
-                        ),
-                      );
-                    }).toList(),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
+      body: FutureBuilder<Map<String, dynamic>>(
+        future: _attendanceData,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(child: CircularProgressIndicator());
+          } else if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return Center(child: Text('No Data Available'));
+          } else {
+            final subjects = snapshot.data!['subjects'] as List;
+            final attendance = snapshot.data!['attendance'] as List;
+
+            return ListView.builder(
+              itemCount: subjects.length,
+              itemBuilder: (context, index) {
+                return ListTile(
+                  title: Text(subjects[index]),
+                  subtitle: Text('Attendance: ${attendance[index]}'),
+                );
+              },
+            );
+          }
+        },
       ),
     );
   }
